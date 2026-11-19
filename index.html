@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>진단고사 결과 영상</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; }
+  body { display: flex; align-items: center; justify-content: center; }
+  video { width: 100%; max-width: 960px; max-height: 100vh; background: #000; }
+</style>
+</head>
+<body>
+<video id="v" controls playsinline preload="metadata"></video>
+
+<script>
+// ===== 설정 =====
+var ENDPOINT = 'https://script.google.com/macros/s/AKfycbz2_nEdSSvKEtEjfEmNfxgxJsL6_M2qFIJmnjZjwUikUxygkCeO9eg2YQI7FHkJEDLX0A/exec';
+var DEFAULT_VIDEO = 'video1.mp4';   // ?v= 가 없을 때 재생할 파일
+// =================
+
+// 주소의 ?v=파일이름 으로 영상을 고름. 예) index.html?v=video1.mp4
+var params = new URLSearchParams(location.search);
+var videoFile = params.get('v') || DEFAULT_VIDEO;
+var videoId = videoFile;
+
+var video = document.getElementById('v');
+video.src = videoFile;
+
+var maxPercent = 0;       // 가장 멀리 본 지점(%)
+var sentMilestones = {};  // 이미 보낸 구간 기록
+var lastHeartbeat = 0;
+
+function send(eventName) {
+  var duration = video.duration || 0;
+  var t = video.currentTime || 0;
+  var pct = duration ? Math.round((t / duration) * 100) : 0;
+  var payload = {
+    videoId: videoId,
+    event: eventName,
+    currentTime: Math.round(t),
+    percent: pct,
+    duration: Math.round(duration)
+  };
+  var body = JSON.stringify(payload);
+  try {
+    // text/plain 으로 보내야 브라우저 사전점검(CORS)에 걸리지 않음
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(ENDPOINT, new Blob([body], { type: 'text/plain' }));
+    } else {
+      fetch(ENDPOINT, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: body, keepalive: true });
+    }
+  } catch (e) {}
+}
+
+video.addEventListener('play', function () {
+  if (!sentMilestones.start) { sentMilestones.start = true; send('시작'); }
+  else { send('재생'); }
+});
+
+video.addEventListener('pause', function () {
+  if (!video.ended) send('일시정지');
+});
+
+video.addEventListener('timeupdate', function () {
+  var duration = video.duration || 0;
+  if (!duration) return;
+  var pct = (video.currentTime / duration) * 100;
+  if (pct > maxPercent) maxPercent = pct;
+
+  // 25 / 50 / 75 % 도달 시 1회씩 기록
+  [25, 50, 75].forEach(function (m) {
+    if (pct >= m && !sentMilestones[m]) {
+      sentMilestones[m] = true;
+      send(m + '%도달');
+    }
+  });
+
+  // 재생 중 30초마다 현재 위치 기록
+  var now = Date.now();
+  if (!video.paused && now - lastHeartbeat > 30000) {
+    lastHeartbeat = now;
+    send('재생중');
+  }
+});
+
+video.addEventListener('ended', function () {
+  send('완료(100%)');
+});
+
+// 페이지를 닫거나 앱을 전환할 때 마지막 위치 기록
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden' && video.currentTime > 0) send('이탈');
+});
+</script>
+</body>
+</html>
